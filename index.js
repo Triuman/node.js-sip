@@ -215,6 +215,62 @@ class VOIP{
 
         sendRegister();
     }
+    
+    unregister(callback) {
+        // We'll do a similar approach to the register method
+        let try_count = 0;
+        let max_retries = 5; // You can set your own max
+        let headers = {
+          extension: this.username,
+          ip: this.ip,
+          port: this.port,
+          requestUri: `sip:${this.register_ip}`,
+          register_ip: this.register_ip,
+          register_port: this.register_port,
+          username: this.username,
+          callId: SIP.Builder.generateBranch(),
+          cseq: ++this.registration_cseq,     // increment the registration CSeq
+          branchId: SIP.Builder.generateBranch(),
+          from_tag: SIP.Builder.generateTag(),
+          expires: 0, // This is the key for unregistering
+        };
+      
+        const sendUnregister = (challengeData, proxyAuth = false) => {
+          try_count++;
+          if (try_count > max_retries) {
+            console.log("Unregister: Max retries reached");
+            if (callback) callback({ type: "UNREGISTER_FAILED", message: { statusCode: 408, statusText: "Request Timeout" } });
+            return;
+          }
+      
+          // Build and send the REGISTER with expires=0 and (optional) authorization
+          this.send(SIP.Builder.SIPMessageObject("REGISTER", headers, challengeData, proxyAuth), (response) => {
+            if (response.statusCode === 200) {
+              console.log("Successfully unregistered from the SIP server.");
+              if (callback) callback({ type: "UNREGISTERED", message: response });
+            } else if (response.statusCode === 401) {
+              // Handle WWW-Authenticate challenge
+              const newChallenge = SIP.Parser.ParseHeaders(response.headers)["WWW-Authenticate"];
+              // Increment the CSeq to respond properly to the challenge
+              headers.cseq = ++this.registration_cseq;
+              headers.password = this.register_password;
+              sendUnregister(newChallenge, false);
+            } else if (response.statusCode === 407) {
+              // Handle Proxy-Authenticate challenge
+              const newChallenge = SIP.Parser.ParseHeaders(response.headers)["Proxy-Authenticate"];
+              headers.cseq = ++this.registration_cseq;
+              headers.password = this.register_password;
+              sendUnregister(newChallenge, true);
+            } else {
+              console.log("Unregister: Unexpected status code:", response.statusCode, response.statusText);
+              if (callback) callback({ type: "UNREGISTER_FAILED", message: response });
+            }
+          });
+        };
+      
+        // Start the unregister logic
+        sendUnregister();
+      }
 
     call(extension, ip, port, client_callback){
         var cseq = 1;
